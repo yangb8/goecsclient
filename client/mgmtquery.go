@@ -3,6 +3,7 @@ package client
 import (
 	"crypto/tls"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -86,6 +87,31 @@ func (e *EcsMgmtClient) PerformRequest(method, uri string, body io.Reader, bodyL
 	return nil, fmt.Errorf("[%s]: %s %s", e.Name, method, resp.Status)
 }
 
+// DELETE ...
+func (e *EcsMgmtClient) DELETE(uri string, body io.Reader, bodyLength int64, headers http.Header, auth Authentication) (*http.Response, error) {
+	return e.Query("DELETE", uri, body, bodyLength, headers)
+}
+
+// GET ...
+func (e *EcsMgmtClient) GET(uri string, body io.Reader, bodyLength int64, headers http.Header, auth Authentication) (*http.Response, error) {
+	return e.Query("GET", uri, body, bodyLength, headers)
+}
+
+// HEAD ...
+func (e *EcsMgmtClient) HEAD(uri string, body io.Reader, bodyLength int64, headers http.Header, auth Authentication) (*http.Response, error) {
+	return e.Query("HEAD", uri, body, bodyLength, headers)
+}
+
+// POST ...
+func (e *EcsMgmtClient) POST(uri string, body io.Reader, bodyLength int64, headers http.Header, auth Authentication) (*http.Response, error) {
+	return e.Query("POST", uri, body, bodyLength, headers)
+}
+
+// PUT ...
+func (e *EcsMgmtClient) PUT(uri string, body io.Reader, bodyLength int64, headers http.Header, auth Authentication) (*http.Response, error) {
+	return e.Query("PUT", uri, body, bodyLength, headers)
+}
+
 // MgmtLogin to login ECS mgmt interface
 func (e *EcsMgmtClient) MgmtLogin() (err error) {
 	e.mutex.Lock()
@@ -113,8 +139,8 @@ func (e *EcsMgmtClient) MgmtLogin() (err error) {
 	return nil
 }
 
-// MgmtQuery does the general queries to ECS
-func (e *EcsMgmtClient) MgmtQuery(method, uri string, body io.Reader, bodyLength int64, headers http.Header) (*http.Response, error) {
+// Query does the general query to ECS
+func (e *EcsMgmtClient) Query(method, uri string, body io.Reader, bodyLength int64, headers http.Header) (*http.Response, error) {
 	if e.token == nil || e.token.Expired() {
 		if err := e.MgmtLogin(); err != nil {
 			return nil, err
@@ -135,18 +161,58 @@ func (e *EcsMgmtClient) MgmtLogout(token string) error {
 	return nil
 }
 
+const (
+	// DecodeJSON ...
+	DecodeJSON = iota
+	// DecodeXML ...
+	DecodeXML
+)
+
+// ErrUnsupportedDecodeType defines a new error type
+var ErrUnsupportedDecodeType = fmt.Errorf("Unsupported Decode Type")
+
 // GetMgmtQueryResultJSON gets query result in json format
 func (e *EcsMgmtClient) GetMgmtQueryResultJSON(uri string, v interface{}) error {
-	resp, err := e.MgmtQuery("GET", uri, nil, 0, http.Header{})
+	return e.getMgmtQueryResult("GET", uri, nil, 0, http.Header{}, v, DecodeJSON)
+}
+
+// GetMgmtQueryResultXML gets query result in xml format
+func (e *EcsMgmtClient) GetMgmtQueryResultXML(uri string, v interface{}) error {
+	return e.getMgmtQueryResult("GET", uri, nil, 0, http.Header{}, v, DecodeXML)
+}
+
+// GetMgmtQueryResultJSONByPost gets query result in json format
+func (e *EcsMgmtClient) GetMgmtQueryResultJSONByPost(uri string, body io.Reader, bodyLength int64, headers http.Header, v interface{}) error {
+	return e.getMgmtQueryResult("POST", uri, body, bodyLength, headers, v, DecodeJSON)
+}
+
+// GetMgmtQueryResultXMLByPost gets query result in xml format
+func (e *EcsMgmtClient) GetMgmtQueryResultXMLByPost(uri string, body io.Reader, bodyLength int64, headers http.Header, v interface{}) error {
+	return e.getMgmtQueryResult("POST", uri, body, bodyLength, headers, v, DecodeXML)
+}
+
+// GetMgmtQueryResult gets query result
+func (e *EcsMgmtClient) getMgmtQueryResult(method, uri string, body io.Reader, bodyLength int64, headers http.Header, v interface{}, t int) error {
+	resp, err := e.Query(method, uri, body, bodyLength, headers)
 	if err != nil {
 		log.Printf("Error while requesting %s: %v", uri, err)
 		return err
 	}
 
 	defer resp.Body.Close()
-	if err = json.NewDecoder(resp.Body).Decode(v); err != nil {
-		log.Printf("Error while decoding json from response: %v", err)
-		return err
+	switch t {
+	case DecodeJSON:
+		if err = json.NewDecoder(resp.Body).Decode(v); err != nil {
+			log.Printf("Error while decoding json from response: %v", err)
+			return err
+		}
+	case DecodeXML:
+		if err = xml.NewDecoder(resp.Body).Decode(v); err != nil {
+			log.Printf("Error while decoding xml from response: %v", err)
+			return err
+		}
+	default:
+		return ErrUnsupportedDecodeType
 	}
 
 	return nil
@@ -161,6 +227,6 @@ func (e *EcsMgmtClient) Close() {
 		}
 	}
 	e.token = nil
-	defer e.mutex.Unlock()
+	e.mutex.Unlock()
 	e = nil
 }
